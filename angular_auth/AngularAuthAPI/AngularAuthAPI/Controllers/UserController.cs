@@ -4,8 +4,13 @@ using AngularAuthAPI.Models;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.IdentityModel.Tokens.Jwt;
 using System.Text;
 using System.Text.RegularExpressions;
+using System;
+using System.Security.Claims;
+using Microsoft.IdentityModel.Tokens;
+using Microsoft.AspNetCore.Authorization;
 
 namespace AngularAuthAPI.Controllers
 {
@@ -25,12 +30,20 @@ namespace AngularAuthAPI.Controllers
             if (userObj == null)
                 return BadRequest();
            
-            var user = await _authContext.Users.FirstOrDefaultAsync(x => x.Username == userObj.Username && x.Password == userObj.Password);
+            var user = await _authContext.Users.FirstOrDefaultAsync(x => x.Username == userObj.Username);
             if (user == null)
                 return NotFound(new { Message = "User Not Found!" });
 
+            if(!PasswordHasher.VerifyPassword(userObj.Password, user.Password))
+            {
+                return BadRequest(new { Message = "Incorrect Password" });
+            }
+
+            user.Token = CreateJwt(user);
+
             return Ok(new
             {
+                Token= user.Token,
                 Message = "Login Success!"
             });
         }
@@ -76,8 +89,8 @@ namespace AngularAuthAPI.Controllers
         private string CheckPasswordStrength(string password)
         {
             StringBuilder sb = new StringBuilder();
-            if(password.Length > 8)
-                sb.Append("Minimum password length should be 8"+Environment.NewLine);
+            if(password.Length <= 8)
+                sb.Append("Minimum password length should be 9"+Environment.NewLine);
 
             if (!(Regex.IsMatch(password, "[a-z]") && Regex.IsMatch(password, "[A-Z]") && Regex.IsMatch(password, "[0-9]")))
                 sb.Append("Password should be Alphanumeric" + Environment.NewLine);
@@ -86,6 +99,36 @@ namespace AngularAuthAPI.Controllers
                 sb.Append("Password should contain special character" + Environment.NewLine);
 
             return sb.ToString();
+        }
+
+        private string CreateJwt(User user)
+        {
+            var jwtTokenHandler=new JwtSecurityTokenHandler();
+            var key = Encoding.ASCII.GetBytes("veryverysecret.....");
+            var identity = new ClaimsIdentity(new Claim[]
+            {
+                new Claim(ClaimTypes.Role,user.Role),
+                new Claim(ClaimTypes.Name,$"{user.Firstname} {user.LastName}"),
+            });
+
+            var credentials = new SigningCredentials(new SymmetricSecurityKey(key), SecurityAlgorithms.HmacSha256);
+
+            var tokenDescriptor = new SecurityTokenDescriptor
+            {
+                Subject = identity,
+                Expires = DateTime.Now.AddDays(1),
+                SigningCredentials = credentials,
+            };
+            var token=jwtTokenHandler.CreateToken(tokenDescriptor); 
+            return jwtTokenHandler.WriteToken(token);
+
+        }
+        [Authorize]
+        [HttpGet]
+
+        public async Task<ActionResult<User>> GetAllUsers()
+        {
+            return Ok(await _authContext.Users.ToListAsync());
         }
 
     }
